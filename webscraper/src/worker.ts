@@ -2,24 +2,25 @@ import { regexps } from './namings';
 /* import { parseUrl } from './utils';
 import { normalizeUrl } from '../../shared/lib'; */
 
+/*
+ * This worker thread processes a chunk of URLs received from the main thread,
+ * makes fetch requests to the specified URLs,
+ * fetches CSS and JS resources used in these URLs,
+ * identifies technologies used through regular expressions,
+ * and incrementally writes the results to a file (one for each URL).
+ */
+
 declare var self: Worker;
 export type RequestResult = [string, Array<string>];
 
 const outDir = import.meta.dir + '/../out';
 
 /*
- * This worker thread processes a chunk of URLs received from the main thread
- * gathers HTML and CSS and JS in it
- * identifies technologies used through regular expressions
- * and incrementally writes the results to a file(for each URL).
+ * The functions parseUrl and normalizeUrl are external.
+ * I have included them here to provide further explanation of their usage.
  */
 
-/*
- * parseUrl and normalizeUrl are external functions
- * but i brought them here to further explain their usage
- */
-
-/* Returns a relative/external URL, based on the entered script/stylesheet source and origin */
+/* Returns a relative/external URL, based on the entered script/stylesheet source and URL origin */
 function parseUrl(src: string, origin: string) {
  if (!src || src === '/') return;
  if (src.startsWith('//')) {
@@ -31,7 +32,6 @@ function parseUrl(src: string, origin: string) {
  }
  return `${origin}/${src}`;
 }
-
 /*
  * Removes http(s):// and replaces/removes special characters
  * Used for naming files
@@ -60,7 +60,6 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
    const normalizedUrl = normalizeUrl(url.href);
    const dest = `${outDir}/${normalizedUrl}.txt`;
    const file = Bun.file(dest);
-
    /* Create an incremental file writer */
    const writer = file.writer();
    writer.start();
@@ -81,7 +80,7 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
        }
       },
      })
-     /* Same here */
+     /* Same here for scripts */
      .on('script', {
       async element(el) {
        try {
@@ -96,7 +95,7 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
      })
      /*
       * Same here
-      * This happens in Svelte/SvelteKit, where they preload modules
+      * This happens in Svelte/SvelteKit, where they preload modules(scripts)
       */
      .on('link[rel="modulepreload"]', {
       async element(el) {
@@ -126,6 +125,7 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
      if (regexps[key as keyof typeof regexps].some((exp: RegExp) => exp.test(text))) return key;
      return;
     })
+    /* Remove undefined returns */
     .filter(Boolean) as Array<string>;
 
    requests.push([url.toString(), matchedExps]);
