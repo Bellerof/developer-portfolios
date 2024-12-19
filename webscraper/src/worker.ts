@@ -1,12 +1,52 @@
 import { regexps } from './namings';
-import { parseUrl } from './utils';
-import { normalizeUrl } from '../../shared/lib';
-import { readdir } from 'fs/promises';
+/* import { parseUrl } from './utils';
+import { normalizeUrl } from '../../shared/lib'; */
 
 declare var self: Worker;
 export type RequestResult = [string, Array<string>];
 
 const outDir = import.meta.dir + '/../out';
+
+/*
+ * This worker thread processes a chunk of URLs received from the main thread
+ * gathers HTML and CSS and JS in it
+ * identifies technologies used through regular expressions
+ * and incrementally writes the results to a file(for each URL).
+ */
+
+/*
+ * parseUrl and normalizeUrl are external functions
+ * but i brought them here to further explain their usage
+ */
+
+/* Returns a relative/external URL, based on the entered script/stylesheet source and origin */
+function parseUrl(src: string, origin: string) {
+ if (!src || src === '/') return;
+ if (src.startsWith('//')) {
+  return `https:${src}`;
+ } else if (src.startsWith('/')) {
+  return origin + src;
+ } else if (src.startsWith('http')) {
+  return src;
+ }
+ return `${origin}/${src}`;
+}
+
+/*
+ * Removes http(s):// and replaces/removes special characters
+ * Used for naming files
+ */
+function normalizeUrl(url: string) {
+ return (
+  url
+   .replace(/http.*\/\//g, '')
+   .replace('?', ',')
+   .replace(/\//g, '_')
+   // https://www.fileformat.info/info/unicode/char/0023/index.htm
+   .replace(/#/g, '35')
+   .toLowerCase()
+ );
+}
 
 self.onmessage = async ({ data: urls }: MessageEvent) => {
  const requests: RequestResult[] = [];
@@ -21,11 +61,14 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
    const dest = `${outDir}/${normalizedUrl}.txt`;
    const file = Bun.file(dest);
 
+   /* Create an incremental file writer */
    const writer = file.writer();
    writer.start();
 
    writer.write(
+    /* Instance a new dom transverser and transformer */
     await new HTMLRewriter()
+     /* On match for a stylesheet fetch and write to file */
      .on("link[rel='stylesheet']", {
       async element(el) {
        try {
@@ -38,6 +81,7 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
        }
       },
      })
+     /* Same here */
      .on('script', {
       async element(el) {
        try {
@@ -50,7 +94,10 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
        }
       },
      })
-     // This happens in Svelte/SvelteKit, where they preload modules
+     /*
+      * Same here
+      * This happens in Svelte/SvelteKit, where they preload modules
+      */
      .on('link[rel="modulepreload"]', {
       async element(el) {
        try {
@@ -63,25 +110,30 @@ self.onmessage = async ({ data: urls }: MessageEvent) => {
        }
       },
      })
+     /* Returns the just consumed response and writes it to the result file(the actual content of the page) */
      .transform(res)
      .arrayBuffer(),
    );
+   /* Flush and close the file writer */
    writer.end();
+   /* Get the closed file's content */
    const text = await file.text();
+   /* Match each technology's regular expressions against the text and collect the matching keys
+    * README: They're in an external file, I'm not going to bring them here because it's huge
+    */
    const matchedExps = Object.keys(regexps)
-    .map((k, i) => {
-     // @ts-ignore
-     // The readonly is for getting suggestions in the namings.ts file while assign object values to the default export, so this isn't type safe
-     if (regexps[k].some((exp: RegExp) => exp.test(text))) return k;
+    .map(key => {
+     if (regexps[key as keyof typeof regexps].some((exp: RegExp) => exp.test(text))) return key;
      return;
     })
     .filter(Boolean) as Array<string>;
-   // Push the site url, the time it took to fetch it, the size of the file, whether the request was successful and the matched regexps
+
    requests.push([url.toString(), matchedExps]);
    console.timeEnd('fetch');
   } catch (err) {
    console.error(`Failed to process ${url}:`, err);
   }
  }
+ /* Post the result of all requests(an array of RequestResult => [URL, MATCHED_TECHNOLOGIES]) to the main thread */
  self.postMessage(requests);
 };
